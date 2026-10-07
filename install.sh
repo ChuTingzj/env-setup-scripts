@@ -13,14 +13,20 @@ source "${SCRIPTS_DIR}/common.sh"
 source "${SCRIPTS_DIR}/install_base.sh"
 # shellcheck source=scripts/install_git.sh
 source "${SCRIPTS_DIR}/install_git.sh"
+# shellcheck source=scripts/install_jenv.sh
+source "${SCRIPTS_DIR}/install_jenv.sh"
 # shellcheck source=scripts/install_java.sh
 source "${SCRIPTS_DIR}/install_java.sh"
 # shellcheck source=scripts/install_docker.sh
 source "${SCRIPTS_DIR}/install_docker.sh"
 # shellcheck source=scripts/install_uv.sh
 source "${SCRIPTS_DIR}/install_uv.sh"
+# shellcheck source=scripts/install_volta.sh
+source "${SCRIPTS_DIR}/install_volta.sh"
 # shellcheck source=scripts/install_nodejs.sh
 source "${SCRIPTS_DIR}/install_nodejs.sh"
+# shellcheck source=scripts/install_gvm.sh
+source "${SCRIPTS_DIR}/install_gvm.sh"
 # shellcheck source=scripts/install_go.sh
 source "${SCRIPTS_DIR}/install_go.sh"
 # shellcheck source=scripts/install_rust.sh
@@ -30,10 +36,10 @@ source "${SCRIPTS_DIR}/install_kubectl.sh"
 # shellcheck source=scripts/install_maven.sh
 source "${SCRIPTS_DIR}/install_maven.sh"
 
-ALL_COMPONENTS=(base git java docker uv nodejs go rust kubectl maven)
+ALL_COMPONENTS=(base git java jenv docker uv volta nodejs gvm go rust kubectl maven)
 
 # Components that support non-root install
-NON_ROOT_COMPONENTS=(uv rust)
+NON_ROOT_COMPONENTS=(uv rust volta nodejs jenv gvm go)
 
 usage() {
   cat <<EOF
@@ -44,11 +50,14 @@ Install common developer tools on Linux (apt / yum / dnf).
 Components:
   base      curl wget build tools vim jq htop ...
   git       Git
-  java      OpenJDK (JAVA_VERSION=${JAVA_VERSION:-17})
+  java      OpenJDK (JAVA_VERSION=${JAVA_VERSION:-17}) and jenv
+  jenv      jenv (registers an installed JDK; does not download one)
   docker    Docker Engine + Compose plugin
   uv        Astral uv (Python package/tooling)
-  nodejs    Node.js LTS (NODE_MAJOR=${NODE_MAJOR:-20})
-  go        Go toolchain (GO_VERSION=latest if unset)
+  volta     Volta and Node.js (NODE_MAJOR=${NODE_MAJOR:-20})
+  nodejs    Node.js via Volta (NODE_MAJOR=${NODE_MAJOR:-20})
+  gvm       gvm and Go (GO_VERSION, else latest stable, else 1.24.5)
+  go        Go via gvm (GO_VERSION=latest if unset)
   rust      Rust via rustup (stable)
   kubectl   Kubernetes CLI (KUBECTL_VERSION=stable if unset)
   maven     Apache Maven (MAVEN_VERSION=${MAVEN_VERSION:-3.9.9})
@@ -64,6 +73,7 @@ Examples:
   sudo $0                      # install all
   sudo $0 git java go maven    # install selected
   sudo JAVA_VERSION=21 $0 java
+  sudo NODE_MAJOR=22 $0 nodejs
   sudo GO_VERSION=1.24.5 $0 go
   sudo MAVEN_VERSION=3.9.9 $0 maven
   $0 --check
@@ -86,8 +96,14 @@ check_versions() {
     print_version "compose" docker compose version
   fi
   print_version "uv" uv --version
+  activate_volta || true
+  print_version "volta" volta --version
   print_version "node" node --version
   print_version "npm" npm --version
+  activate_jenv || true
+  print_version "jenv" jenv --version
+  activate_gvm || true
+  print_version "gvm" gvm version
   print_version "go" go version
   print_version "rustc" rustc --version
   print_version "cargo" cargo --version
@@ -102,9 +118,12 @@ run_component() {
     base)    install_base ;;
     git)     install_git ;;
     java)    install_java ;;
+    jenv)    install_jenv ;;
     docker)  install_docker ;;
     uv)      install_uv ;;
+    volta)   install_volta ;;
     nodejs)  install_nodejs ;;
+    gvm)     install_gvm ;;
     go)      install_go ;;
     rust)    install_rust ;;
     kubectl) install_kubectl ;;
