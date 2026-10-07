@@ -72,6 +72,13 @@ ensure_curl() {
   fi
 }
 
+ensure_git() {
+  if ! command_exists git; then
+    log_info "Installing git..."
+    pkg_install git
+  fi
+}
+
 ensure_wget() {
   if ! command_exists wget; then
     log_info "Installing wget..."

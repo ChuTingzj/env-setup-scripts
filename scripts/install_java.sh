@@ -6,6 +6,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "${SCRIPT_DIR}/common.sh"
+# shellcheck source=install_jenv.sh
+source "${SCRIPT_DIR}/install_jenv.sh"
 
 JAVA_VERSION="${JAVA_VERSION:-17}"
 
@@ -81,6 +83,7 @@ install_java() {
   fi
 
   log_ok "Java: $(java -version 2>&1 | head -n1)"
+  install_jenv
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
