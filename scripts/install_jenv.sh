@@ -48,17 +48,47 @@ _write_jenv_path() {
   fi
 }
 
+# readlink -f is missing on older macOS. Fall back to walking symlinks.
+_resolve_link() {
+  local path="$1"
+  local resolved=""
+  resolved="$(readlink -f "${path}" 2>/dev/null || true)"
+  if [[ -n "${resolved}" ]]; then
+    printf '%s\n' "${resolved}"
+    return 0
+  fi
+  local dir base
+  while [[ -L "${path}" ]]; do
+    dir="$(cd "$(dirname "${path}")" && pwd)" || return 1
+    base="$(readlink "${path}")"
+    if [[ "${base}" == /* ]]; then
+      path="${base}"
+    else
+      path="${dir}/${base}"
+    fi
+  done
+  dir="$(cd "$(dirname "${path}")" && pwd)" || return 1
+  printf '%s/%s\n' "${dir}" "$(basename "${path}")"
+}
+
 # Print the JDK home for a java binary. jenv shims are not a JDK.
 _java_home_from_bin() {
   local java_bin="$1"
   [[ -n "${java_bin}" && -x "${java_bin}" ]] || return 0
+  # macOS /usr/bin/java is an install stub. Running it opens a dialog.
+  if [[ "$(uname -s)" == "Darwin" && "${java_bin}" == "/usr/bin/java" ]]; then
+    return 0
+  fi
   local resolved home
-  resolved="$(readlink -f "${java_bin}" 2>/dev/null || true)"
+  resolved="$(_resolve_link "${java_bin}")"
   [[ -n "${resolved}" && -x "${resolved}" ]] || return 0
   if [[ -n "${JENV_ROOT:-}" && "${resolved}" == "${JENV_ROOT}/"* ]]; then
     return 0
   fi
   home="$(dirname "$(dirname "${resolved}")")"
+  if [[ "$(uname -s)" == "Darwin" && "${home}" == "/usr" ]]; then
+    return 0
+  fi
   if [[ -x "${home}/bin/java" ]]; then
     printf '%s\n' "${home}"
   fi
@@ -81,7 +111,8 @@ _detect_java_home() {
     fi
   fi
   # Shims precede /usr/bin once jenv is on PATH. The distro JDK is still there.
-  if [[ -x /usr/bin/java ]]; then
+  # On macOS, /usr/bin/java is a stub and is ignored above.
+  if [[ "$(uname -s)" != "Darwin" && -x /usr/bin/java ]]; then
     _java_home_from_bin /usr/bin/java
   fi
 }
@@ -99,7 +130,8 @@ _register_jdk_with_jenv() {
   add_out="$(jenv add "${java_home}" 2>&1)"
   set -e
   # jenv colors its "added" lines when stdout is a terminal, and sometimes when it is not.
-  add_out="$(printf '%s\n' "${add_out}" | sed -r 's/\x1b\[[0-9;]*m//g')"
+  # -E works on both GNU sed and the macOS BSD sed.
+  add_out="$(printf '%s\n' "${add_out}" | sed -E 's/\x1b\[[0-9;]*m//g')"
   if printf '%s\n' "${add_out}" | grep -q 'added'; then
     log_ok "Registered JDK with jenv: ${java_home}"
   elif printf '%s\n' "${add_out}" | grep -qi 'already'; then
@@ -132,7 +164,7 @@ install_jenv() {
   else
     log_info "Installing jenv to ${root}..."
     if ! command_exists git; then
-      if [[ "${EUID}" -ne 0 ]]; then
+      if [[ "${EUID}" -ne 0 && "$(uname -s)" != "Darwin" ]]; then
         log_error "git is required to install jenv."
         exit 1
       fi

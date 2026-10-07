@@ -89,8 +89,10 @@ _go_ready() {
 
 # gvm's command wrapper checks these even for `gvm install -B`.
 _ensure_gvm_deps() {
-  local missing=()
-  local tool pkgs=()
+  local missing tool
+  local pkgs
+  missing=()
+  pkgs=()
   for tool in git curl gcc make bison ar; do
     if ! command_exists "${tool}"; then
       missing+=("${tool}")
@@ -99,7 +101,8 @@ _ensure_gvm_deps() {
   if [[ ${#missing[@]} -eq 0 ]]; then
     return 0
   fi
-  if [[ "${EUID}" -ne 0 ]]; then
+  # macOS installs these with Homebrew as the regular user. Linux still needs root.
+  if [[ "${EUID}" -ne 0 && "$(uname -s)" != "Darwin" ]]; then
     log_error "gvm requires ${missing[*]}. Install them, or re-run as root."
     exit 1
   fi
@@ -133,7 +136,7 @@ install_gvm() {
     log_info "Installing gvm to ${root}..."
     ensure_curl
     if ! command_exists git; then
-      if [[ "${EUID}" -ne 0 ]]; then
+      if [[ "${EUID}" -ne 0 && "$(uname -s)" != "Darwin" ]]; then
         log_error "git is required to install gvm."
         exit 1
       fi

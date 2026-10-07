@@ -21,8 +21,13 @@ require_root() {
   fi
 }
 
-# Detect package manager: apt | dnf | yum
+# Detect package manager: brew (macOS) | apt | dnf | yum
 detect_pkg_manager() {
+  # Darwin is first so a Mac never falls through into apt/dnf/yum.
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    echo "brew"
+    return 0
+  fi
   if command -v apt-get >/dev/null 2>&1; then
     echo "apt"
   elif command -v dnf >/dev/null 2>&1; then
@@ -42,6 +47,7 @@ pkg_update() {
     apt) apt-get update -y ;;
     dnf) dnf makecache -y ;;
     yum) yum makecache -y ;;
+    brew) NONINTERACTIVE=1 brew update ;;
   esac
 }
 
@@ -50,6 +56,7 @@ pkg_install() {
     apt) apt-get install -y "$@" ;;
     dnf) dnf install -y "$@" ;;
     yum) yum install -y "$@" ;;
+    brew) NONINTERACTIVE=1 brew install --formula "$@" ;;
   esac
 }
 
@@ -58,6 +65,7 @@ pkg_remove() {
     apt) apt-get remove -y "$@" ;;
     dnf) dnf remove -y "$@" ;;
     yum) yum remove -y "$@" ;;
+    brew) NONINTERACTIVE=1 brew uninstall --formula "$@" ;;
   esac
 }
 
@@ -108,10 +116,45 @@ detect_arch() {
   esac
 }
 
+# macOS ships install stubs at /usr/bin/{java,python3,git}. Running them opens a dialog.
+# Return 0 when the version command must not be executed.
+_skip_macos_stub() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 1
+  local cmd="$1"
+  local bin=""
+  bin="$(command -v "${cmd}" 2>/dev/null || true)"
+  case "${cmd}" in
+    java)
+      [[ "${bin}" == "/usr/bin/java" ]] || return 1
+      if /usr/libexec/java_home >/dev/null 2>&1; then
+        return 1
+      fi
+      return 0
+      ;;
+    python3)
+      [[ "${bin}" == "/usr/bin/python3" ]]
+      ;;
+    git)
+      [[ "${bin}" == "/usr/bin/git" ]] || return 1
+      if xcode-select -p >/dev/null 2>&1; then
+        return 1
+      fi
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 print_version() {
   local name="$1"
   shift
   if ! command_exists "$1"; then
+    log_warn "${name}: not found"
+    return 0
+  fi
+  if _skip_macos_stub "$1"; then
     log_warn "${name}: not found"
     return 0
   fi
