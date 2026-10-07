@@ -1,30 +1,36 @@
 #!/usr/bin/env bash
-# Developer environment bootstrap.
-# Linux: apt / dnf / yum. macOS: Homebrew via install-macos.sh.
+# macOS developer environment bootstrap (Intel and Apple Silicon).
+# Homebrew prefix follows uname -m:
+#   x86_64 -> /usr/local
+#   arm64  -> /opt/homebrew
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Intel (x86_64) and Apple Silicon (arm64) share one Mac installer.
-if [[ "$(uname -s)" == "Darwin" ]]; then
-  exec /usr/bin/env bash "${ROOT_DIR}/install-macos.sh" "$@"
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "This installer is for macOS (Intel x86_64 or Apple Silicon arm64)." >&2
+  exit 1
 fi
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="${ROOT_DIR}/scripts"
+MACOS_DIR="${SCRIPTS_DIR}/macos"
 
 # shellcheck source=scripts/common.sh
 source "${SCRIPTS_DIR}/common.sh"
-# shellcheck source=scripts/install_base.sh
-source "${SCRIPTS_DIR}/install_base.sh"
-# shellcheck source=scripts/install_git.sh
-source "${SCRIPTS_DIR}/install_git.sh"
+# shellcheck source=scripts/macos/common.sh
+source "${MACOS_DIR}/common.sh"
+# shellcheck source=scripts/macos/install_homebrew.sh
+source "${MACOS_DIR}/install_homebrew.sh"
+# shellcheck source=scripts/macos/install_base.sh
+source "${MACOS_DIR}/install_base.sh"
+# shellcheck source=scripts/macos/install_git.sh
+source "${MACOS_DIR}/install_git.sh"
 # shellcheck source=scripts/install_jenv.sh
 source "${SCRIPTS_DIR}/install_jenv.sh"
-# shellcheck source=scripts/install_java.sh
-source "${SCRIPTS_DIR}/install_java.sh"
-# shellcheck source=scripts/install_docker.sh
-source "${SCRIPTS_DIR}/install_docker.sh"
+# shellcheck source=scripts/macos/install_java.sh
+source "${MACOS_DIR}/install_java.sh"
+# shellcheck source=scripts/macos/install_docker.sh
+source "${MACOS_DIR}/install_docker.sh"
 # shellcheck source=scripts/install_uv.sh
 source "${SCRIPTS_DIR}/install_uv.sh"
 # shellcheck source=scripts/install_volta.sh
@@ -37,34 +43,32 @@ source "${SCRIPTS_DIR}/install_gvm.sh"
 source "${SCRIPTS_DIR}/install_go.sh"
 # shellcheck source=scripts/install_rust.sh
 source "${SCRIPTS_DIR}/install_rust.sh"
-# shellcheck source=scripts/install_kubectl.sh
-source "${SCRIPTS_DIR}/install_kubectl.sh"
-# shellcheck source=scripts/install_maven.sh
-source "${SCRIPTS_DIR}/install_maven.sh"
+# shellcheck source=scripts/macos/install_kubectl.sh
+source "${MACOS_DIR}/install_kubectl.sh"
+# shellcheck source=scripts/macos/install_maven.sh
+source "${MACOS_DIR}/install_maven.sh"
 
 ALL_COMPONENTS=(base git java jenv docker uv volta nodejs gvm go rust kubectl maven)
 
-# Components that support non-root install
-NON_ROOT_COMPONENTS=(uv rust volta nodejs jenv gvm go)
-
 usage() {
   cat <<EOF
-Usage: sudo $0 [OPTIONS] [COMPONENTS...]
+Usage: $0 [OPTIONS] [COMPONENTS...]
 
-Install common developer tools on Linux (apt / yum / dnf).
-On macOS, this command runs the Homebrew installer for the current chip.
+Install common developer tools on macOS with Homebrew.
+Intel (uname -m x86_64) uses /usr/local. Apple Silicon (uname -m arm64) uses /opt/homebrew.
+Run the same command on either chip. sudo is not required.
 
 Components:
-  base      curl wget build tools vim jq htop ...
+  base      curl-compatible CLI tools, compilers (Command Line Tools), python3
   git       Git
   java      OpenJDK (JAVA_VERSION=${JAVA_VERSION:-17}) and jenv
   jenv      jenv (registers an installed JDK; does not download one)
-  docker    Docker Engine + Compose plugin
+  docker    Docker CLI, Compose, buildx, and colima
   uv        Astral uv (Python package/tooling)
   volta     Volta and Node.js (NODE_MAJOR=${NODE_MAJOR:-20})
   nodejs    Node.js via Volta (NODE_MAJOR=${NODE_MAJOR:-20})
   gvm       gvm and Go (GO_VERSION, else latest stable, else 1.24.5)
-  go        Go via gvm (GO_VERSION=latest if unset)
+  go        Go via gvm binary install (-B)
   rust      Rust via rustup (stable)
   kubectl   Kubernetes CLI (KUBECTL_VERSION=stable if unset)
   maven     Apache Maven (MAVEN_VERSION=${MAVEN_VERSION:-3.9.9})
@@ -77,12 +81,12 @@ Options:
   --no-base      Skip base packages when installing all
 
 Examples:
-  sudo $0                      # install all
-  sudo $0 git java go maven    # install selected
-  sudo JAVA_VERSION=21 $0 java
-  sudo NODE_MAJOR=22 $0 nodejs
-  sudo GO_VERSION=1.24.5 $0 go
-  sudo MAVEN_VERSION=3.9.9 $0 maven
+  $0
+  $0 git java go maven
+  JAVA_VERSION=21 $0 java
+  NODE_MAJOR=22 $0 nodejs
+  GO_VERSION=1.24.5 $0 go
+  MAVEN_VERSION=3.9.9 $0 maven
   $0 --check
 
 EOF
@@ -92,9 +96,42 @@ list_components() {
   printf '%s\n' "${ALL_COMPONENTS[@]}"
 }
 
+_rerun_as_user_if_sudo() {
+  [[ "${EUID}" -eq 0 ]] || return 0
+  local arg
+  for arg in "$@"; do
+    case "${arg}" in
+      -h|--help|-l|--list) return 0 ;;
+    esac
+  done
+  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+    log_info "Continuing as ${SUDO_USER}; Homebrew does not run as root."
+    exec sudo -u "${SUDO_USER}" -H env \
+      "NODE_MAJOR=${NODE_MAJOR:-}" \
+      "JAVA_VERSION=${JAVA_VERSION:-}" \
+      "GO_VERSION=${GO_VERSION:-}" \
+      "KUBECTL_VERSION=${KUBECTL_VERSION:-}" \
+      "MAVEN_VERSION=${MAVEN_VERSION:-}" \
+      NONINTERACTIVE=1 \
+      /bin/bash "${BASH_SOURCE[0]}" "$@"
+  fi
+  for arg in "$@"; do
+    case "${arg}" in
+      -c|--check) return 0 ;;
+    esac
+  done
+  log_error "Run as a normal macOS user. Homebrew does not install as root."
+  exit 1
+}
+
 check_versions() {
-  log_info "Package manager: ${PKG_MANAGER}"
-  log_info "Architecture:    $(uname -m)"
+  log_info "Operating system: macOS $(sw_vers -productVersion 2>/dev/null || true)"
+  log_info "Architecture:     $(uname -m) ($(macos_arch_label))"
+  if macos_activate_homebrew_if_present; then
+    log_info "Homebrew prefix:  $(brew --prefix)"
+  else
+    log_warn "Homebrew: not installed at $(macos_homebrew_prefix)"
+  fi
   echo
   print_version "git" git --version
   print_version "java" java -version
@@ -132,7 +169,7 @@ run_component() {
     nodejs)  install_nodejs ;;
     gvm)     install_gvm ;;
     go)      install_go ;;
-    rust)    install_rust ;;
+    rust)    install_rust_macos ;;
     kubectl) install_kubectl ;;
     maven)   install_maven ;;
     *)
@@ -143,10 +180,23 @@ run_component() {
   esac
 }
 
+install_rust_macos() {
+  install_rust
+  if [[ -f "${HOME}/.cargo/env" ]]; then
+    append_once '. "$HOME/.cargo/env"' "${HOME}/.bashrc"
+    append_once '. "$HOME/.cargo/env"' "${HOME}/.zshrc"
+    append_once '. "$HOME/.cargo/env"' "${HOME}/.zprofile"
+  fi
+}
+
 main() {
-  local components=()
+  local components filtered c
   local check_only=0
   local include_base=1
+  components=()
+  filtered=()
+
+  _rerun_as_user_if_sudo "$@"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -191,42 +241,38 @@ main() {
     components=("${ALL_COMPONENTS[@]}")
   fi
 
-  # uv / rust may be installed without root; others need root.
-  local needs_root=0
-  for c in "${components[@]}"; do
-    local allowed=0
-    for nr in "${NON_ROOT_COMPONENTS[@]}"; do
-      [[ "${c}" == "${nr}" ]] && allowed=1 && break
-    done
-    if [[ "${allowed}" -eq 0 ]]; then
-      needs_root=1
-      break
-    fi
-  done
-  if [[ "${needs_root}" -eq 1 ]]; then
-    require_root
-  fi
-
   if [[ "${include_base}" -eq 0 ]]; then
-    local filtered=()
+    filtered=()
     for c in "${components[@]}"; do
       [[ "${c}" == "base" ]] && continue
       filtered+=("${c}")
     done
-    components=("${filtered[@]}")
+    if [[ ${#filtered[@]} -eq 0 ]]; then
+      components=()
+    else
+      components=("${filtered[@]}")
+    fi
   fi
 
-  log_info "Target OS: $(. /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-unknown}" || echo unknown)"
-  log_info "Package manager: ${PKG_MANAGER}"
-  log_info "Components: ${components[*]}"
+  ensure_homebrew
+
+  log_info "Architecture: $(uname -m) ($(macos_arch_label)); Homebrew $(macos_homebrew_prefix); release arch $(macos_release_arch)"
+  if [[ ${#components[@]} -eq 0 ]]; then
+    log_info "Components: none"
+  else
+    log_info "Components: ${components[*]}"
+  fi
   echo
 
-  for c in "${components[@]}"; do
-    echo "======== ${c} ========"
-    run_component "${c}"
-    echo
-  done
+  if [[ ${#components[@]} -gt 0 ]]; then
+    for c in "${components[@]}"; do
+      echo "======== ${c} ========"
+      run_component "${c}"
+      echo
+    done
+  fi
 
+  macos_link_shell_profiles
   log_ok "Done."
   echo
   check_versions
